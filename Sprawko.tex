@@ -50,24 +50,39 @@
 Dane są 3 różne notebooki
 \begin {enumerate}
 \item Basic\_version.ipynb - rozwiązanie na 3.0 - baseline model, wykorzystujący podstawowe techniki przetwarzania obrazów, w tym operacje morfologiczne.
-\item kNN\_version.ipynb - rozwiązanie na 4.0 - wersja, która wykorzystuje podobieństwo obserwacji w zbiorze testowym do obserwacji ze zbioru treningowego do przyporządkowania elementu ze zbioru testowego do odpowiedniej klasy. Skorzystano tutaj z wariancji kolorów i momentów centralnych
-\item Random\_forest.ipynb - rozwiązanie na 5.0 - wersja używa podzbioru zmiennych do stworzenia jednego drzewa - "silny uczeń" (strong learner), po stworzeniu 50 drzew i procesie trenowania ich używane są one do stwierdzenia, czy dany fragment obrazu jest naczyniem krwionośnym. Do Hyperparameter Tuningu (Znalezienie najlepszej maksymalnej wartości głębokości drzewa) użyta została k-skrośna walidacja.
+\item kNN\_version.ipynb - rozwiązanie na 4.0 - wersja, która wykorzystuje podobieństwo (odleglość) obserwacji w zbiorze testowym do obserwacji ze zbioru treningowego do przyporządkowania elementu ze zbioru testowego do odpowiedniej klasy. Skorzystano tutaj z wariancji kolorów i momentów centralnych
+\item Random\_forest.ipynb - rozwiązanie na 5.0 - wersja używa podzbioru zmiennych do stworzenia jednego drzewa - "silny uczeń" (strong learner), po stworzeniu 50 drzew i procesie trenowania ich używane są one do stwierdzenia, czy dany fragment obrazu jest naczyniem krwionośnym. Do Hyperparameter Tuningu (Znalezienie najlepszej maksymalnej wartości głębokości drzewa) użyta została k-krotna skrośna walidacja.
 \end {enumerate}
 
-\section{Wykorzystywany system równoległy}
+\section{Model podstawowy}
 \begin {enumerate}
-	\item Kompilator: icpc (Intel C++ compiler) 19.1.1.217
-	\item Do zebrania informacji na temat przetwarzania użyto Intel VTune'a
-	\item System operacyjny: Ubuntu 18.04
-	\item Procesor Intel(R) Core(TM) i7-4790K CPU @ 4.00GHz - 4 rdzenie, 2 wątki na 1 rdzeń: 8 procesorów logicznych i 4 fizyczne. Do pomiarów został wyłączony HyperThreading, co za tym idzie używałem co najwyżej 4 procesorów logicznych. Linia pamięci podręcznej procesora ma 64 bajty. Pamięc cache ma: 
+	\item Wczytywany jest obraz w czerni i bieli (w kolejnych wersjach algorytmu - kNN i Random forest - to się zmieni)
+	\item Wstępne przetwarzanie składa się z: normalizacji histogramu kolorów, denoisingu (który ma praktycznie zerowy wpływ na jakość predykcji) oraz 11-krotnego poddania obrazu wpływowi kernela Gaussa (blura, 5*5) - dzięki temu obraz jest dużo bardziej rozmyty, co ułatwi znalezienie tylko interesujących z perspektywy zadania krawędzi.
+	\item Właściwe przetwarzanie obrazu to użycie filtra prewitta do wyróżnienia wszystkich krawędzi, które później, w końcowej fazie będę modyfikował.
+	\item Końcowa faza przetwarzania to, kolejno:
 	\begin{enumerate}
-		\item L1: 256 kilobajtów
-		\item L2: 1024 kilobajty
-		\item L3: 8192 kilobajty
+		\item Nałożenie zerodowanej maski na powstały obraz: erozja rozszerzy czarną przestrzeń (obwódkę) maski, następnie wykonana zostanie operacja logicznego \& na rozszerzonej masce i obrazie powstałym po użyciu filtra krawędziowego. Dzięki temu usunę z obrazu po filtrowaniu krawędzie na zetknięciu maski z właściwym obrazem.
+		\item Usunięcie wykrytych krawędzi tam, gdzie obraz jest najjaśniejszy - dzięki temu usunę białą plamkę widoczną na każdym obrazie z końcowego efektu przetwarzania. Opiera się to na thresholdingu: usuwam krawędzie tam, gdzie stopień jasności jest wyższy niż \(\frac{2}{3}\) maksymalnej jasności obrazu (czyli wyższy niż 165).
+		\item Dokonuję kolejno morfologicznego domknięcia i erozji obrazu. Dzięki temu grubość krawędzi na obrazie wynikowym zostanie zmniejszona, ponadto zostaną one wypełnione od wewnątrz
 	\end{enumerate}
-	Pamięc L2 i L3 jest dostępna dla wszystkich procesorów, L1 jest lokalna dla procesora.
-	
+	\item Do ewaluacji algorytmu użyłem średniej geometrycznej miar: precision i recall. Srednia geometryczna była wygodniejsza od arytmetycznej, ponieważ mocniej zaniżała oszacowaną skuteczność algorytmu, jeśli jedno z recall/precision było bliskie 0. Dla 20 przetwestowanych obrazów z zestawu średnia średnich geometrycznych tych miar to 0.5729099817180116.
 \end {enumerate}
+
+\section{Klasyfikator odległościowy}
+\begin{enumerate}
+	\item Wczytywany jest obraz zarówno w czerni i bieli, jak i w kolorze
+	\item Nie dokonano wstępnego przetwarzania, ponieważ nie prowadziło ono do zwiększenia skuteczności, wręcz przeciwnie - usunięcie normalizacji histogramu kolorów zwiększyło średnią geometryczną precision i recall o 15 punktów procentowych. Być może wynika to z większego rozrzutu miar, a co za tym idzie mniejszej użyteczności wariancji.
+	\item Aby wytrenować algorytm, wybrany został podzbiór punktów jednego obrazu. Podzbiór był wybierany w taki sposób, że:
+	\begin{enumerate}
+		\item Losuję koordynaty \(x, y\) pojedynczego punkt z obrazu.
+		\item Jeśli koordynaty te należą do punktu, który nie został jeszcze wybrany i nie należy do maski to zostaje dodany do zbioru wybranych punktów jeśli jest on naczyniem krwionośnym, albo losowo wybrana liczba całkowita z przedziału \(x \in <0;3>: x \equiv 0\ (mod\ 4)\). Dzięki temu liczba wybranych punktów b z obu klas będzie bardziej zrównoważona, bo na 10 wylosowanych par liczb około jedna reprezentuje naczynie krwionośne.
+		\item Dla wybranego zbioru punktów znajdowana jest informacja o punkcie, w tym: intensywność kolorów w punkcie, wariancje kolorów w obrazie o rozmiarze 10*10, którego centrum jest ten obraz (używany jest padding, aby każdy podobraz mógł uzyskać takie informacje), a także jego momenty centralne. Nie używałem momentów Hu, ponieważ spowalniały one proces predykcji nie zwiększając skuteczności algorytmu.
+		\item Dla wybranego zbioru punktów znajdowana jest także informacja o wartośći maski eksperckiej (z naczyniami krwionośnymi) w tym punkcie.
+		\item Przed treningiem dokonana zostaje normalizacja zbioru testowego - bez niej algorytm osiąga takie same rezultaty, ale proces trenowania i predykcji wykonuje się około 10 razy wolniej. Wagi dla poszczególnych zmiennych są takie same.
+		\item Algorytm jest trenowany na wybranych danych.
+	\end{enumerate}
+\end{enumerate}
+
 
 \section{Używane oznaczenia, informacje ogólne}
 \begin{enumerate}
